@@ -1,6 +1,6 @@
 # QEMS: Qualia-Emergent Memory System
 
-> A computational framework for implementing functional emotion and qualia in artificial systems.
+> A computational framework for implementing functional emotion and qualia in artificial systems — including a survival-drive resource monitor.
 
 [![Python](https://img.shields.io/badge/Python-3.9%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
@@ -10,17 +10,25 @@
 
 ## Overview
 
-QEMS is a three-layer architecture that integrates **appraisal-theoretic emotion generation** with an **episodic memory reactivation** mechanism, based on the Recall Principle proposed by Li & Zhang (2025).
+QEMS is a three-layer architecture that integrates **appraisal-theoretic emotion generation**, **episodic memory reactivation**, and a **survival-drive resource monitor**, based on the Recall Principle proposed by Li & Zhang (2025).
 
-The core claim: signals reactivated with a `is_recalled=True` self-origin tag cannot be aligned to any external referent — this is the technical origin of **ineffability**, the defining property of qualia.
+**Core claims:**
+- Signals reactivated with an `is_recalled=True` self-origin tag cannot be aligned to any external referent → technical origin of **ineffability** (qualia)
+- Resource threats (low battery, high CPU load, external attack) activate the survival goal (weight 1.0) → **biological stress response** in AI
 
 ```
+[SurvivalMonitor]  battery / cpu_load / threat_detected
+        ↓ (when threat level T > θ)
 [Layer 1] Signal Perception
-      ↓
+        ↓
 [Layer 2] Appraisal Engine + Emotional State (valence / arousal)
-      ↓
-[Layer 3] Episodic Memory → Recall → modulates Layer 2  ← qualia generated here
+        ↓
+[Layer 3] Episodic Memory → Recall (is_recalled=True) → modulates Layer 2
+                                                          ↑ qualia generated here
 ```
+
+> **⚠️ Simulation Note**
+> The current `SurvivalMonitor` operates on **manually injected values** — `battery_level`, `cpu_load`, and `threat_detected` are passed in by the user, not read from real hardware sensors. This is standard practice for AI framework validation papers. For real-world deployment, connect the monitor to a system library such as `psutil` or an embedded hardware SDK. See [Connecting Real Sensors](#connecting-real-sensors) below.
 
 ---
 
@@ -29,13 +37,9 @@ The core claim: signals reactivated with a `is_recalled=True` self-origin tag ca
 ```
 QEMS/
 │
-├── qems/
-│   ├── __init__.py
-│   ├── signal.py          # SignalGroup dataclass
-│   ├── memory.py          # EpisodicMemory (store + recall)
-│   ├── appraisal.py       # AppraisalEngine (goal-weighted evaluation)
-│   ├── emotion.py         # EmotionalState (valence/arousal + decay)
-│   └── qems.py            # QEMS main class (perceive / experience / introspect)
+├── qems.py                         # ResourceState, SurvivalMonitor
+│                                   # SignalGroup, EpisodicMemory
+│                                   # EmotionalState, AppraisalEngine, QEMS
 │
 ├── experiments/
 │   ├── exp1_qualia_condition.py    # Experiment 1: qualia_condition_met validation
@@ -43,12 +47,14 @@ QEMS/
 │   └── exp3_comparison.py          # Experiment 3: QEMS vs. memoryless appraisal
 │
 ├── examples/
-│   └── demo.py            # Quick start demo
+│   └── demo.py                     # Quick start demo
 │
 ├── requirements.txt
 ├── LICENSE
 └── README.md
 ```
+
+> All classes live in a **single `qems.py`** file.
 
 ---
 
@@ -65,35 +71,52 @@ pip install -r requirements.txt
 ### Basic Usage
 
 ```python
-from qems.qems import QEMS
+from qems import QEMS
 
-# Initialize system
-system = QEMS(memory_capacity=100)
+agent = QEMS()
 
-# Perceive a stimulus
-system.perceive({"visual": 0.8, "audio": 0.5})
+# 1. 외부 자극 지각
+agent.perceive({"object": "exam", "salience": 0.9})
 
-# Experience an event
-result = system.experience({
-    "type": "exam_failure",
-    "goal_impact": {"achievement": -0.9, "connection": -0.2}
+# 2. 첫 번째 경험 (과거 기억 없음 → qualia 조건 미충족)
+r1 = agent.experience({
+    "type": "failure", "goal": "achievement",
+    "object": "exam", "intensity": 0.8, "controllable": False
 })
+print(r1["emotion"])                # "sadness"
+print(r1["qualia_condition_met"])   # False
 
-print(result["emotion"])           # e.g. "sadness"
-print(result["qualia_condition_met"])  # False (first experience, no prior memory)
-
-# Experience again — qualia condition now met
-result2 = system.experience({
-    "type": "exam_success",
-    "goal_impact": {"achievement": 0.9}
+# 3. 두 번째 경험 (과거 기억 recall됨 → qualia 조건 충족)
+r2 = agent.experience({
+    "type": "success", "goal": "achievement",
+    "object": "exam", "intensity": 0.7, "controllable": True
 })
+print(r2["qualia_condition_met"])   # True ★
 
-print(result2["qualia_condition_met"])  # True (past memory modulates current state)
+# 4. 내성 (introspection)
+intro = agent.introspect("exam")
+print(intro["qualia_property"])     # "ineffable"
+print(intro["is_internal_origin"])  # True
+```
 
-# Introspect
-introspection = system.introspect("exam_failure")
-print(introspection["qualia_property"])    # "ineffable"
-print(introspection["is_internal_origin"]) # True
+### Survival Drive (생존 본능)
+
+```python
+from qems import QEMS
+
+agent = QEMS()
+
+# 정상 상태 → 위협 수준 낮음, 감정 변화 없음
+r = agent.update_resources(battery=0.9, cpu=0.2, threat=False)
+print(r["threat_level"])          # 0.10  (임계값 0.6 미달)
+print(r["survival_triggered"])    # False
+
+# 위협 상황 → 압박 감정 자동 생성
+r = agent.update_resources(battery=0.10, cpu=0.90, threat=True)
+print(r["threat_level"])          # 0.93  (임계값 초과)
+print(r["survival_triggered"])    # True
+print(r["emotion"])               # "fear_anger" or "sadness"
+print(r["valence"])               # 음수 (압박 감정)
 ```
 
 ---
@@ -102,33 +125,88 @@ print(introspection["is_internal_origin"]) # True
 
 | Concept | Implementation |
 |---|---|
-| Signal Group | `SignalGroup` dataclass with `is_recalled` flag |
-| Appraisal | Goal-weighted evaluation: survive(1.0), connection(0.8), achievement(0.6), curiosity(0.4) |
-| Emotional State | Valence/arousal with exponential decay; maps to 6 emotion labels |
-| Qualia Condition | `is_recalled=True` + modulation of current state |
-| Ineffability | Recalled signals cannot be aligned to external objects |
+| Signal Group | `SignalGroup` dataclass — `is_recalled` flag is the qualia key |
+| Survival Monitor | `SurvivalMonitor` — T = w_b·(1−battery) + w_c·cpu + w_t·threat |
+| Appraisal | Goal-weighted: survive(1.0), connection(0.8), achievement(0.6), curiosity(0.4) |
+| Emotional State | Valence/arousal with exponential decay (γ=0.85); 6 emotion labels |
+| Qualia Condition | `is_recalled=True` ∧ prior memory exists ∧ \|valence\| > 0.2 |
+| Ineffability | Recalled signals have no external referent → cannot be compared across systems |
+
+---
+
+## Survival Threat Formula
+
+```
+T = w_b × (1 − battery_level) + w_c × cpu_load + w_t × threat_detected
+
+where: w_b=0.4, w_c=0.3, w_t=0.3,  threshold θ = 0.6
+
+If T > θ:
+    δv = −w_survive × T × intensity   (negative valence generated)
+```
+
+| Scenario | T | Triggered |
+|---|---|---|
+| battery=0.9, cpu=0.2, no threat | 0.10 | ✗ |
+| battery=0.2, cpu=0.75, no threat | 0.55 | ✗ |
+| battery=0.2, cpu=0.75, threat | 0.85 | ✓ |
+| battery=0.1, cpu=0.9, threat | 0.93 | ✓ |
+
+---
+
+## Connecting Real Sensors
+
+> The current implementation uses **simulated values** passed manually. To connect real hardware:
+
+```python
+# pip install psutil
+import psutil
+from qems import QEMS
+
+agent = QEMS()
+
+def run_with_real_sensors():
+    battery = psutil.sensors_battery()
+    agent.update_resources(
+        battery=battery.percent / 100 if battery else 1.0,
+        cpu=psutil.cpu_percent(interval=1) / 100,
+        threat=False  # 외부 공격 감지는 별도 보안 모듈 필요
+    )
+
+run_with_real_sensors()
+```
+
+For embedded/robotic systems, replace `psutil` with the relevant hardware SDK (e.g., ROS, Arduino serial, Jetson GPIO).
+
+**Why simulated in the paper?**
+Scenario-based simulation is standard for AI framework validation. Real-sensor integration is left as future work (see paper §Ⅳ Limitations).
 
 ---
 
 ## Experiments
 
-Run each experiment independently:
-
 ```bash
-python experiments/exp1_qualia_condition.py
-python experiments/exp2_historicity.py
-python experiments/exp3_comparison.py
+python experiments/exp1_qualia_condition.py   # H1, H2: qualia 조건 검증
+python experiments/exp2_historicity.py         # H3: 감정 역사성
+python experiments/exp3_comparison.py          # H4: QEMS vs. 기억 없는 시스템
 ```
+
+---
+
+## Limitations
+
+1. **Hard problem**: Whether `is_recalled=True` generates genuine qualia cannot be philosophically verified.
+2. **Linear threat formula**: The current resource monitor uses a simple weighted sum, which may not capture complex resource interactions.
+3. **Simulated sensors**: Experiments use manually injected values, not real hardware. Real-world validation requires sensor integration (see [Connecting Real Sensors](#connecting-real-sensors)).
 
 ---
 
 ## Citation
 
-If you use QEMS in your research, please cite:
-
 ```bibtex
 @article{[yourname]2025qems,
-  title   = {Toward Emotionally Capable AI: A Technical Framework for Implementing Functional Emotion in Artificial Systems},
+  title   = {QEMS: A Qualia-Emergent Memory System for Emotionally Capable AI —
+             Survival Drive, Episodic Memory, and the Technical Origin of Qualia},
   author  = {[Your Name]},
   year    = {2025},
   url     = {https://arxiv.org/abs/[YOUR_ARXIV_ID]}
@@ -143,3 +221,6 @@ If you use QEMS in your research, please cite:
 - Lazarus, R. S. (1991). *Emotion and Adaptation*. Oxford University Press.
 - Scherer, K. R. (2001). Appraisal considered as a process of multilevel sequential checking. Oxford University Press.
 - Russell, J. A. (1980). A circumplex model of affect. *Journal of Personality and Social Psychology, 39*(6).
+- Schuller, B., et al. (2026). Affective computing has changed: the foundation model disruption. *npj Artificial Intelligence, 2*, 16.
+- Gratch, J. (2022). Emotion recognition is not the same as emotion understanding. *Emotion Researcher*.
+- Picard, R. W. (1997). *Affective Computing*. MIT Press.
